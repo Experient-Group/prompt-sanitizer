@@ -259,6 +259,38 @@
             border-color: #71a9bf;
         }
 
+        #outputDisplay {
+            width: 100%;
+            min-height: 240px;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            background: white;
+            color: #000;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-y: auto;
+        }
+
+        .highlight {
+            background-color: #eaff03;
+            color: #09121f;
+            padding: 2px 4px;
+            border-radius: 3px;
+            animation: fadeOut 2s ease-in-out forwards;
+        }
+
+        @keyframes fadeOut {
+            0% {
+                background-color: #eaff03;
+            }
+            100% {
+                background-color: transparent;
+            }
+        }
+
         .buttons {
             display: flex;
             gap: 12px;
@@ -406,6 +438,15 @@
                     <button class="btn-add-set" onclick="createNewSet()">+ Add</button>
                 </div>
 
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0;">
+                    <div style="font-size: 0.9em; font-weight: 500; margin-bottom: 8px; color: #09121f;">Import from CSV</div>
+                    <input type="file" id="csvFileInput" accept=".csv" style="display: none;" onchange="handleCSVUpload(event)">
+                    <button class="btn-add-set" onclick="document.getElementById('csvFileInput').click()" style="width: 100%;">📁 Upload CSV</button>
+                    <div style="font-size: 0.75em; color: #666; margin-top: 8px; line-height: 1.4;">
+                        CSV format: Two columns (Original, Replacement) with optional header row
+                    </div>
+                </div>
+
                 <div class="section" style="margin-top: 25px;">
                     <div class="section-title">Wildcard Options</div>
                     <div style="background: #ffffff; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
@@ -453,7 +494,8 @@
 
                 <div class="section">
                     <div class="section-title">Output</div>
-                    <textarea id="outputText" rows="10" placeholder="Results will appear here..." readonly></textarea>
+                    <div id="outputDisplay"></div>
+                    <textarea id="outputText" rows="10" placeholder="Results will appear here..." readonly style="display: none;"></textarea>
                 </div>
 
                 <div class="stats">
@@ -604,6 +646,109 @@
             showToast('✓ Set created!', 'success');
         }
 
+        function handleCSVUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const csvContent = e.target.result;
+                    const mappings = parseCSV(csvContent);
+
+                    if (mappings.length === 0) {
+                        showToast('No valid mappings found in CSV', 'warning');
+                        return;
+                    }
+
+                    // Create a new mapping set with the CSV filename
+                    const fileName = file.name.replace('.csv', '');
+                    const id = 'set_' + Date.now();
+                    mappingSets[id] = {
+                        name: fileName,
+                        mappings: mappings
+                    };
+
+                    currentSetId = id;
+                    saveToStorage();
+                    renderMappingSets();
+                    renderMappingEditor(id);
+                    showToast(`✓ Imported ${mappings.length} mapping(s) from CSV`, 'success');
+                } catch (error) {
+                    showToast('Error parsing CSV file', 'error');
+                    console.error('CSV parse error:', error);
+                }
+            };
+            reader.readAsText(file);
+
+            // Reset the file input so the same file can be uploaded again
+            event.target.value = '';
+        }
+
+        function parseCSV(csvText) {
+            const lines = csvText.split('\n').map(line => line.trim()).filter(line => line);
+            const mappings = [];
+
+            // Check if first row is a header (contains common header terms)
+            let startIndex = 0;
+            if (lines.length > 0) {
+                const firstLine = lines[0].toLowerCase();
+                if (firstLine.includes('original') || firstLine.includes('replacement') ||
+                    firstLine.includes('from') || firstLine.includes('to')) {
+                    startIndex = 1; // Skip header row
+                }
+            }
+
+            for (let i = startIndex; i < lines.length; i++) {
+                const line = lines[i];
+
+                // Parse CSV line, handling quoted values
+                const parts = parseCSVLine(line);
+
+                if (parts.length >= 2 && parts[0].trim() && parts[1].trim()) {
+                    mappings.push({
+                        original: parts[0].trim(),
+                        replacement: parts[1].trim()
+                    });
+                }
+            }
+
+            return mappings;
+        }
+
+        function parseCSVLine(line) {
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                const nextChar = line[i + 1];
+
+                if (char === '"') {
+                    if (inQuotes && nextChar === '"') {
+                        // Escaped quote
+                        current += '"';
+                        i++; // Skip next quote
+                    } else {
+                        // Toggle quote state
+                        inQuotes = !inQuotes;
+                    }
+                } else if (char === ',' && !inQuotes) {
+                    // Field separator
+                    result.push(current);
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+
+            // Add last field
+            result.push(current);
+
+            return result;
+        }
+
         function selectSet(id) {
             currentSetId = id;
             saveToStorage();
@@ -696,6 +841,7 @@
 
             let result = inputText;
             let count = 0;
+            let highlightedResult = escapeHtml(inputText);
 
             // Process wildcard emails
             if (wildcardSettings.emails) {
@@ -704,6 +850,7 @@
                 if (matches) {
                     count += matches.length;
                     result = result.replace(emailRegex, '[email]');
+                    highlightedResult = highlightedResult.replace(emailRegex, '<span class="highlight">[email]</span>');
                 }
             }
 
@@ -715,6 +862,7 @@
                 if (matches) {
                     count += matches.length;
                     result = result.replace(phoneRegex, '[phone]');
+                    highlightedResult = highlightedResult.replace(phoneRegex, '<span class="highlight">[phone]</span>');
                 }
             }
 
@@ -725,10 +873,16 @@
                 if (matches) {
                     count += matches.length;
                     result = result.replace(regex, mapping.replacement);
+                    const escapedReplacement = escapeHtml(mapping.replacement);
+                    highlightedResult = highlightedResult.replace(
+                        new RegExp(escapeRegex(escapeHtml(mapping.original)), 'g'),
+                        `<span class="highlight">${escapedReplacement}</span>`
+                    );
                 }
             }
 
             document.getElementById('outputText').value = result;
+            displayOutput(highlightedResult);
             document.getElementById('replacementCount').textContent = count;
             showToast(`✓ Sanitized! ${count} replacement(s) made`, 'success');
         }
@@ -748,6 +902,7 @@
 
             let result = inputText;
             let count = 0;
+            let highlightedResult = escapeHtml(inputText);
 
             for (const mapping of mappings) {
                 const regex = new RegExp(escapeRegex(mapping.replacement), 'g');
@@ -755,16 +910,33 @@
                 if (matches) {
                     count += matches.length;
                     result = result.replace(regex, mapping.original);
+                    const escapedOriginal = escapeHtml(mapping.original);
+                    highlightedResult = highlightedResult.replace(
+                        new RegExp(escapeRegex(escapeHtml(mapping.replacement)), 'g'),
+                        `<span class="highlight">${escapedOriginal}</span>`
+                    );
                 }
             }
 
             document.getElementById('outputText').value = result;
+            displayOutput(highlightedResult);
             document.getElementById('replacementCount').textContent = count;
             showToast(`✓ Desanitized! ${count} replacement(s) made`, 'success');
         }
 
         function escapeRegex(string) {
             return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function displayOutput(htmlContent) {
+            const outputDisplay = document.getElementById('outputDisplay');
+            outputDisplay.innerHTML = htmlContent || '<span style="color: #999;">Results will appear here...</span>';
         }
 
         function copyOutput() {
@@ -784,6 +956,7 @@
         function clearAll() {
             document.getElementById('inputText').value = '';
             document.getElementById('outputText').value = '';
+            displayOutput('');
             document.getElementById('replacementCount').textContent = '0';
             showToast('✓ Cleared all fields', 'success');
         }
